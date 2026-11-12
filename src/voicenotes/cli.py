@@ -20,7 +20,7 @@ console = Console()
 
 def _ctx():
     cfg = config.load()
-    return cfg, Store(cfg.db_path)
+    return cfg, Store(cfg.db_path, my_name=cfg.my_name)
 
 
 # When run by the menu bar app, progress goes out as machine-readable lines.
@@ -50,7 +50,8 @@ def transcribe(file: Path = typer.Argument(..., exists=True, dir_okay=False),
                              folder_id=folder_id)
     console.print(f"\n[bold green]Klaar[/bold green]: meeting {m.id} in {m.dir}\n")
     if m.summary:
-        console.print(Markdown(m.summary))
+        from .names import render
+        console.print(Markdown(render(m.summary, store.get_meeting_speakers(m.id))))
 
 
 @app.command()
@@ -113,7 +114,9 @@ def record(title: str = typer.Option(None, "--title", "-t", help="Titel van de m
     console.print(f"\n[green]Opname opgeslagen[/green] ({int(rec.elapsed)} s) in {m.dir}")
     if process:
         pipeline.process_recording(cfg, store, m, progress=_progress, num_speakers=speakers)
-        console.print(Markdown(store.get_meeting(m.id).summary or ""))
+        from .names import render
+        console.print(Markdown(render(store.get_meeting(m.id).summary or "",
+                                      store.get_meeting_speakers(m.id))))
     else:
         console.print(f"Later verwerken met: voicenotes process {m.id}")
 
@@ -125,7 +128,9 @@ def process_cmd(meeting_id: int,
     cfg, store = _ctx()
     pipeline.reprocess(cfg, store, store.get_meeting(meeting_id), progress=_progress,
                        num_speakers=speakers)
-    console.print(Markdown(store.get_meeting(meeting_id).summary or ""))
+    from .names import render
+    console.print(Markdown(render(store.get_meeting(meeting_id).summary or "",
+                                  store.get_meeting_speakers(meeting_id))))
 
 
 @app.command("list")
@@ -173,10 +178,12 @@ def show(meeting_id: int, transcript: bool = typer.Option(False, "--transcript",
     m = store.get_meeting(meeting_id)
     console.print(f"[bold]{m.title}[/bold]  [dim]{m.created_at}  {m.dir}[/dim]\n")
     if transcript:
-        for line in to_lines(store.get_segments(m.id)):
+        for line in to_lines(store.get_segments(m.id), store.speaker_names(m.id)):
             console.print(line)
     else:
-        console.print(Markdown(m.summary or "_Nog geen samenvatting._"))
+        from .names import render
+        console.print(Markdown(render(m.summary, store.get_meeting_speakers(m.id))
+                               or "_Nog geen samenvatting._"))
 
 
 @app.command()
@@ -184,7 +191,9 @@ def resummarize(meeting_id: int):
     """Maak de samenvatting opnieuw (bijv. na het wisselen van LLM)."""
     cfg, store = _ctx()
     pipeline.summarize(cfg, store, meeting_id, progress=_progress)
-    console.print(Markdown(store.get_meeting(meeting_id).summary or ""))
+    from .names import render
+    console.print(Markdown(render(store.get_meeting(meeting_id).summary or "",
+                                  store.get_meeting_speakers(meeting_id))))
 
 
 @app.command()
@@ -196,57 +205,78 @@ def ask(question: str,
 
 
 @app.command()
-def speakers(meeting_id: int = typer.Argument(None, help="Meeting-ID; leeg = opgeslagen stemprofielen")):
-    """Toon de sprekers van een meeting, of alle opgeslagen stemprofielen."""
+def speakers(meeting_id: int):
+    """Toon de sprekers van een meeting."""
     _, store = _ctx()
-    if meeting_id is None:
-        table = Table("Naam", "Samples")
-        for _, name, _, n in sorted(store.get_profiles(), key=lambda p: p[1].lower()):
-            table.add_row(name, str(n))
-        console.print(table)
-        return
     segs = store.get_segments(meeting_id)
-    table = Table("Spreker", "Bekend profiel", "Spreektijd", "Voorbeeld")
-    for _, name, pid, _ in store.get_meeting_speakers(meeting_id):
-        mine = [s for s in segs if s.speaker == name]
+    table = Table("Code", "Spreker", "Persoon", "Spreektijd", "Voorbeeld")
+    for sp in store.get_meeting_speakers(meeting_id):
+        mine = [s for s in segs if s.speaker == sp.label]
+        if not mine:
+            continue
         talk = sum(s.end - s.start for s in mine)
-        sample = max(mine, key=lambda s: len(s.text)).text[:70] if mine else ""
-        table.add_row(name, "ja" if pid else "nee", f"{talk / 60:.1f} min", sample)
+        sample = max(mine, key=lambda s: len(s.text)).text[:60]
+        table.add_row(sp.tag or "", sp.default_name, sp.person_name or "-", f"{talk / 60:.1f} min",
+                      sample)
     console.print(table)
 
 
 @app.command()
-def name(meeting_id: int, old: str, new: str,
-         no_summary: bool = typer.Option(False, "--no-summary", help="Samenvatting niet opnieuw maken")):
-    """Geef een spreker een naam; de stem wordt onthouden voor volgende meetings.
+def name(meeting_id: int, speaker: str = typer.Argument(..., help='Code (S2) of naam ("Spreker 2")'),
+         person: str = typer.Argument(..., help="Persoon; bestaat die nog niet, dan wordt hij aangemaakt")):
+    """Koppel een spreker aan een persoon. Zelfde persoon bij twee sprekers = samengevoegd.
 
-    Voorbeeld: voicenotes name 3 "Spreker 1" "Jan de Vries"
+    Voorbeeld: voicenotes name 3 S2 "Jan de Vries"
     """
     cfg, store = _ctx()
-    try:
-        pipeline.name_speaker(cfg, store, meeting_id, old, new, progress=_progress,
-                              resummarize=not no_summary)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
+    sp = next((x for x in store.get_meeting_speakers(meeting_id)
+               if speaker.lower() in {(x.tag or "").lower(), x.default_name.lower(), x.name.lower()}),
+              None)
+    if sp is None:
+        console.print(f"[red]Spreker '{speaker}' niet gevonden in meeting {meeting_id}[/red]")
         raise typer.Exit(1)
+    pipeline.assign_speaker(cfg, store, meeting_id, sp.label, person)
+    console.print(f"{sp.tag} ({sp.default_name}) is nu {person}. Samenvatting en transcript zijn bijgewerkt.")
+
+
+@app.command()
+def people():
+    """Toon alle personen."""
+    _, store = _ctx()
+    table = Table("ID", "Naam", "Stem bekend", "Meetings")
+    for p in store.list_people():
+        table.add_row(str(p["id"]), p["name"] + (" (jij)" if p["isMe"] else ""),
+                      "ja" if p["hasVoice"] else "nee", str(p["meetings"]))
+    console.print(table)
+
+
+@app.command("merge-people")
+def merge_people(source: str, target: str):
+    """Voeg persoon SOURCE samen met TARGET (SOURCE verdwijnt). Namen mogen ook ID's zijn."""
+    _, store = _ctx()
+    ids = []
+    for who in (source, target):
+        pid = int(who) if who.isdigit() else store.find_person(who)
+        if pid is None:
+            console.print(f"[red]Geen persoon '{who}'[/red]")
+            raise typer.Exit(1)
+        ids.append(pid)
+    store.merge_people(*ids)
+    pipeline.refresh_people(store)
+    console.print("Samengevoegd")
 
 
 @app.command()
 def forget(name: str):
-    """Verwijder een opgeslagen stemprofiel."""
+    """Verwijder een persoon (en daarmee de herkenning van zijn of haar stem)."""
     _, store = _ctx()
-    ok = store.delete_profile(name)
-    console.print("Verwijderd" if ok else f"[red]Geen profiel '{name}'[/red]")
-
-
-@app.command("app")
-def run_app(hidden: bool = typer.Option(False, "--hidden", help="Alleen in de menubalk starten")):
-    """Start de menubalk-app."""
-    import sys
-
-    from .app import main
-    sys.argv = [sys.argv[0]] + (["--hidden"] if hidden else [])
-    main()
+    pid = store.find_person(name)
+    if pid is None:
+        console.print(f"[red]Geen persoon '{name}'[/red]")
+        raise typer.Exit(1)
+    store.delete_person(pid)
+    pipeline.refresh_people(store)
+    console.print("Verwijderd")
 
 
 @app.command("install-app")

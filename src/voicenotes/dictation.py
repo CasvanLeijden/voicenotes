@@ -107,7 +107,8 @@ def cleanup(text: str, cfg: Config, timeout: float = 8.0) -> str:
         try:
             # No thinking here: it would add 10+ s after every dictation for a simple task.
             result.append(LLM(cfg).chat(CLEANUP_PROMPT.format(vocab=vocab), text,
-                                        temperature=0.0, think=False))
+                                        temperature=0.0, think=False,
+                                        max_answer_tokens=len(text) // 2 + 100))
         except Exception:
             pass
 

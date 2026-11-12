@@ -27,6 +27,10 @@ class Config:
     dictation_model: str = "mlx-community/whisper-large-v3-turbo"
     # Tidy dictated text with the LM Studio model (punctuation, filler words). Adds ~1 s.
     dictation_cleanup: bool = False
+    # Appearance: "dark" (default), "light" or "system".
+    theme: str = "dark"
+    # Keep Voicenotes windows out of screen sharing and screenshots.
+    hide_from_screen_share: bool = True
     detect_calls: bool = True
     # Per call app (display name, e.g. "Teams"): start recording automatically, or never ask.
     auto_record_apps: list[str] = field(default_factory=list)
@@ -37,8 +41,9 @@ class Config:
     lmstudio_url: str = "http://localhost:1234/v1"
     # Empty = use the loaded LLM with the most context.
     llm_model: str = ""
-    # Let reasoning models think before answering: better summaries, but several times slower.
-    llm_thinking: bool = True
+    # Let reasoning models think before answering. Off by default: with Qwen3.5-9B thinking
+    # took 10+ minutes and returned nothing; without it a full summary takes ~25 s.
+    llm_thinking: bool = False
     embed_model: str = "text-embedding-nomic-embed-text-v1.5"
     # Characters per transcript chunk when summarizing. 0 = derive from the context length
     # that is loaded in LM Studio.

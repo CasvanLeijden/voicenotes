@@ -393,3 +393,217 @@ form > .sheet-actions { margin: 0; padding: 12px 24px; border-top: 1px solid var
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Speakers: link to people */
+.spk .who-form { display: flex; gap: 6px; align-items: center; }
+.spk .who-form input { width: 200px; }
+.spk .linkinfo { grid-column: 1 / -1; color: var(--muted); font-size: var(--step--1); margin-top: -2px; }
+.spk .unlink { border: 0; background: none; color: var(--muted); font-size: var(--step--1); padding: 2px 4px; border-radius: 5px; }
+.spk .unlink:hover { color: var(--rec); background: var(--hover); }
+.spk .code { font-size: var(--step--1); color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* People sheet */
+.people-intro { margin: -6px 0 14px !important; }
+.person-add { display: flex; gap: 8px; margin-bottom: 14px; }
+.person-add input { flex: 1; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); outline: 0; }
+.person-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.people-list { display: grid; gap: 2px; }
+.person { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line-soft); }
+.person:last-child { border-bottom: 0; }
+.person .pname { border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 6px; margin-left: -6px; font-weight: 600; width: 100%; outline: 0; }
+.person .pname:hover { border-color: var(--line); }
+.person .pname:focus { border-color: var(--accent); background: var(--bg); }
+.person .meta2 { grid-column: 1; display: flex; gap: 8px; color: var(--muted); font-size: var(--step--1); margin-top: -4px; }
+.person .badge2 { padding: 0 7px; border-radius: 10px; background: var(--hover); }
+.person .badge2.voice { color: var(--s3); background: color-mix(in srgb, var(--s3) 12%, transparent); }
+.person select { grid-row: 1 / span 2; grid-column: 2; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); font-size: var(--step--1); max-width: 170px; }
+.person .del { grid-row: 1 / span 2; grid-column: 3; border: 0; background: none; color: var(--muted); width: 26px; height: 26px; border-radius: 6px; }
+.person .del:hover { color: var(--rec); background: var(--hover); }
+
+/* =====================================================================
+   Liquid glass layer (dark by default).
+   The window itself is transparent: macOS blurs the desktop behind it
+   (NSVisualEffectView). On top float glass panels with a thin light rim
+   and a soft highlight along the top edge.
+   ===================================================================== */
+
+body.dark {
+  --bg: transparent;
+  --side: transparent;
+  --surface: rgba(34, 37, 46, .62);
+  --surface-2: rgba(255, 255, 255, .06);
+  --ink: #F3F5FA;
+  --ink-2: rgba(236, 240, 250, .84);
+  --muted: rgba(226, 232, 245, .52);
+  --line: rgba(255, 255, 255, .10);
+  --line-soft: rgba(255, 255, 255, .07);
+  --accent: #8FB0FF;
+  --accent-soft: rgba(143, 176, 255, .16);
+  --rec: #FF5A5F;
+  --rec-soft: rgba(255, 90, 95, .14);
+  --me: #AEB6C8;
+  --hover: rgba(255, 255, 255, .07);
+  --select: rgba(143, 176, 255, .20);
+  --rim: rgba(255, 255, 255, .14);
+  --rim-top: rgba(255, 255, 255, .22);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, 0) 42%);
+  --shadow: 0 1px 0 rgba(255, 255, 255, .06) inset, 0 18px 50px rgba(0, 0, 0, .35);
+  --panel-blur: blur(40px) saturate(170%);
+  --s1: #8FB0FF; --s2: #FFB15E; --s3: #4FD1C5; --s4: #C59BFF; --s5: #A8D46F; --s6: #FF7EA8;
+  color-scheme: dark;
+}
+
+body.light {
+  --bg: transparent;
+  --side: transparent;
+  --surface: rgba(255, 255, 255, .62);
+  --surface-2: rgba(255, 255, 255, .55);
+  --line: rgba(20, 30, 60, .10);
+  --line-soft: rgba(20, 30, 60, .07);
+  --hover: rgba(20, 30, 60, .06);
+  --select: rgba(44, 79, 163, .14);
+  --rim: rgba(255, 255, 255, .7);
+  --rim-top: rgba(255, 255, 255, .95);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, 0) 45%);
+  --shadow: 0 1px 0 rgba(255, 255, 255, .7) inset, 0 18px 40px rgba(20, 30, 60, .12);
+  --panel-blur: blur(40px) saturate(160%);
+  color-scheme: light;
+}
+
+html, body { background: transparent; }
+
+/* Only for previews outside the app, where there is no macOS blur behind the page. */
+html.preview body.dark { background: radial-gradient(1200px 700px at 15% 0%, #2a3350, transparent 60%), radial-gradient(900px 600px at 100% 100%, #3b2240, transparent 55%), #0e1016; }
+html.preview body.light { background: radial-gradient(1200px 700px at 15% 0%, #dfe7ff, transparent 60%), radial-gradient(900px 600px at 100% 100%, #f6e4ef, transparent 55%), #eef1f6; }
+
+.app { grid-template-columns: 260px minmax(0, 1fr) auto; }
+
+/* --- glass recipe ------------------------------------------------------ */
+.glass, .main, .answers, dialog.sheet, .askbar, .menu, .toast {
+  background: var(--surface);
+  background-image: var(--sheen);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
+  border: 1px solid var(--rim);
+  border-top-color: var(--rim-top);
+  box-shadow: var(--shadow);
+}
+
+/* --- sidebar: sits directly on the window's blur --------------------------- */
+.sidebar { background: transparent; border-right: 0; padding: 0 10px 12px 12px; }
+.traffic-space { height: 40px; flex: none; }   /* room for the window buttons */
+.record-btn {
+  border-radius: 999px; padding: 11px 16px; border: 1px solid rgba(255, 255, 255, .18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .14), rgba(255, 255, 255, .05));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 6px 18px rgba(0, 0, 0, .18);
+  color: var(--ink);
+}
+body.light .record-btn { background: linear-gradient(180deg, rgba(255,255,255,.85), rgba(255,255,255,.55)); border-color: rgba(255,255,255,.9); }
+.record-btn:hover { border-color: color-mix(in srgb, var(--rec) 55%, transparent); }
+.record-btn .dot { box-shadow: 0 0 10px color-mix(in srgb, var(--rec) 70%, transparent); }
+.record-btn.on {
+  background: linear-gradient(180deg, #FF7A7E, #E5484D); border-color: rgba(255, 255, 255, .35); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 8px 26px rgba(229, 72, 77, .45);
+}
+.search { margin: 10px 0 12px; border-radius: 999px; height: 32px; padding: 0 12px; background: var(--hover); border: 1px solid var(--line-soft); }
+.tree { overflow-y: auto; flex: 1; margin: 0 -4px; padding: 0 4px; min-height: 0; }
+.tree .meetings { border-top: 0; padding-top: 4px; overflow: visible; }
+.group { margin: 14px 10px 4px; }
+
+/* folders with their meetings */
+.folder-list { max-height: none; overflow: visible; }
+.folder-block { border-radius: 12px; margin-bottom: 2px; }
+.folder-block.drop, .meetings.drop { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 12px; }
+.folder { border-radius: 10px; padding: 6px 8px; gap: 6px; cursor: default; }
+.folder .chev { width: 13px; height: 13px; color: var(--muted); transition: transform .15s ease; flex: none; }
+.folder-block.open > .folder .chev { transform: rotate(90deg); }
+.folder .fname { font-weight: 600; }
+.folder.target .fname { color: var(--accent); }
+.folder.new input { margin-left: 2px; }
+.folder-items { margin: 0 0 6px 14px; padding-left: 8px; border-left: 1px solid var(--line-soft); }
+.folder-empty { color: var(--muted); font-size: var(--step--1); margin: 4px 10px 8px; }
+.folder-empty.loose { margin-top: 12px; }
+.item { border-radius: 10px; }
+.item.active { background: var(--select); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+
+/* --- main panel: one floating sheet of glass ------------------------------- */
+.main { margin: 8px 8px 8px 0; border-radius: 18px; overflow: hidden; }
+.meeting-head { padding-top: 26px; }
+.title { font-size: 26px; letter-spacing: -.015em; }
+.tabs { background: var(--hover); border: 1px solid var(--line-soft); border-radius: 999px; padding: 3px; }
+.tabs button { border-radius: 999px; padding: 4px 16px; }
+.tabs button[aria-selected="true"], body.dark .tabs button[aria-selected="true"] {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .22), rgba(255, 255, 255, .10));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 2px 8px rgba(0, 0, 0, .18); color: var(--ink);
+}
+body.light .tabs button[aria-selected="true"] { background: #fff; box-shadow: 0 1px 3px rgba(20, 30, 60, .15); }
+.strip { background: var(--hover); border-radius: 999px; height: 22px; }
+.strip i { top: 5px; bottom: 5px; border-radius: 3px; }
+.live { background: var(--rec-soft); border: 1px solid color-mix(in srgb, var(--rec) 30%, transparent); border-radius: 16px; }
+.stop-btn { border-radius: 999px; background: linear-gradient(180deg, #FF7A7E, #E5484D); box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 6px 18px rgba(229, 72, 77, .35); }
+.askbar { border-radius: 999px; padding: 5px 5px 5px 18px; margin-bottom: 14px; }
+.primary, .askbar .primary { border-radius: 999px; background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 100%, #fff 12%), var(--accent)); border-color: transparent; box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
+body.dark .primary { color: #0B1430; }
+.ghost { border-radius: 999px; background: var(--hover); border-color: var(--line-soft); }
+.spk input, .who-form input, .field input[type="text"], .field textarea, .field select, .person-add input {
+  background: var(--hover); border-color: var(--line); color: var(--ink);
+}
+.prose li.task .box { border-radius: 5px; }
+
+/* answers: a second floating glass panel */
+.answers { margin: 8px 8px 8px 0; border-radius: 18px; border-left: 1px solid var(--rim); }
+
+/* sheets */
+dialog.sheet { border-radius: 20px; }
+form > .sheet-actions { background: transparent; }
+dialog::backdrop { background: rgba(6, 8, 14, .35); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.toast { color: var(--ink); border-radius: 999px; }
+
+/* --- clickable things get the hand cursor ------------------------------- */
+button, [role="button"], [role="tab"], [role="menuitem"], .item, .folder, select, summary,
+input[type="checkbox"], input[type="range"], .inline-check, .field.check label, .scope,
+.strip i, .turn .time, .chip button, a { cursor: pointer; }
+button:disabled, [aria-disabled="true"] { cursor: default; }
+input[type="text"], input[type="search"], textarea, .title[contenteditable="true"] { cursor: text; }
+
+/* --- recording: the sidebar button only shows the time; stop in the meeting --- */
+.record-btn.on { cursor: default; pointer-events: none; }
+.record-btn.on .label { font-weight: 600; }
+
+/* --- "…" menu for the open meeting ---------------------------------------- */
+.icon-btn.more { width: 34px; height: 34px; border-radius: 999px; background: var(--hover); border: 1px solid var(--line-soft); }
+.menu { border-radius: 14px; padding: 6px; min-width: 250px; }
+.menu button { border-radius: 8px; padding: 7px 10px; color: var(--ink); }
+.menu button:hover, .menu button:focus-visible { background: var(--accent); color: #0B1430; outline: 0; }
+body.light .menu button:hover { color: #fff; }
+.menu .danger { color: var(--rec); }
+.menu .danger:hover { background: var(--rec); color: #fff; }
+.menu hr { border-top-color: var(--line); }
+.submenu-wrap { position: relative; }
+.has-sub::after { content: "›"; float: right; color: var(--muted); }
+.menu.sub { display: none; position: absolute; right: calc(100% + 6px); top: -6px; min-width: 200px; }
+.submenu-wrap:hover > .menu.sub, .submenu-wrap:focus-within > .menu.sub { display: block; }
+.menu.sub button.current::before { content: "✓"; display: inline-block; width: 18px; margin-left: -4px; }
+.menu.sub button:not(.current) { padding-left: 24px; }
+.record-btn:disabled { opacity: 1; color: #fff; }
+/* While recording the sidebar button is a status, not a stop button: pulsing dot, no square. */
+.record-btn.on .dot { border-radius: 50%; width: 10px; height: 10px; background: #fff; animation: pulse 1.4s ease-in-out infinite; }
+
+/* search results: where the term appears in the summary */
+.item .snip { margin-top: 3px; font-size: var(--step--1); color: var(--ink-2); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item .snip mark { background: var(--accent-soft); color: var(--ink); border-radius: 3px; padding: 0 2px; }
+
+/* Clear Liquid Glass: let the desktop shine through the panels too. */
+body.glass-clear.light { --surface: rgba(255, 255, 255, .66); --hover: rgba(20, 30, 60, .07); }
+/* frosted Liquid Glass is calm enough on its own: sidebar, gutter and title strip share it */
+body.glass-clear.light .search { background: rgba(255, 255, 255, .55); border-color: rgba(20, 30, 60, .08); }
+body.glass-clear .main, body.glass-clear .answers { -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%); }
+body.glass-clear.light .prose, body.glass-clear.light .turn .text, body.glass-clear.light .title { text-shadow: 0 1px 1px rgba(255, 255, 255, .5); }
+/* Recording in light mode: the light button style above is more specific than .record-btn.on,
+   which left white text on a white button. Keep it red in every theme. */
+body.light .record-btn.on, body.dark .record-btn.on {
+  background: linear-gradient(180deg, #FF7A7E, #E5484D); border-color: rgba(255, 255, 255, .45); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 8px 26px rgba(229, 72, 77, .40);
+}
+body.light .record-btn.on .timer, body.dark .record-btn.on .timer { color: #fff; }

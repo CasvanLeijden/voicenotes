@@ -46,3 +46,21 @@ def test_migration_adds_folder_column(tmp_path):
     con.commit(); con.close()
     store = Store(db)
     assert store.get_meeting(1).folder_id is None
+
+
+def test_copy_meeting(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    fid = store.create_folder("Klant")
+    m = store.create_meeting("Origineel", "recording", tmp_path / "m", folder_id=fid)
+    (m.dir / "mic.flac").write_bytes(b"x")
+    (m.dir / "summary.md").write_text("oud")
+    store.save_segments(m.id, [Segment(0, 1, "hallo", "Jan")])
+    jan = store.create_person("Jan")
+    store.save_meeting_speakers(m.id, [("SPEAKER_00", "Spreker 1", jan, np.ones(3, np.float32))])
+    store.save_summary(m.id, "oud")
+    c = store.copy_meeting(m.id, "Kopie", tmp_path / "m")
+    assert c.id != m.id and c.folder_id == fid and c.summary is None
+    assert (c.dir / "mic.flac").exists() and not (c.dir / "summary.md").exists()
+    assert [s.text for s in store.get_segments(c.id)] == ["hallo"]
+    assert [x.name for x in store.get_meeting_speakers(c.id)] == ["Jan"]
+    assert store.get_meeting(m.id).summary == "oud"   # original untouched

@@ -7,34 +7,24 @@
 <link rel="stylesheet" href="app.css">
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 </head>
-<body class="light">
+<body class="dark">
 <div class="app">
 
   <aside class="sidebar">
+    <div class="traffic-space" aria-hidden="true"></div>
     <button class="record-btn" id="recordBtn" type="button">
       <span class="dot" aria-hidden="true"></span>
       <span class="label">Opname starten</span>
       <span class="timer" id="sideTimer"></span>
     </button>
-    <div class="side-actions">
-      <button class="ghost" id="importBtn" type="button">Bestand importeren</button>
-      <button class="icon-btn" id="settingsBtn" type="button" title="Instellingen" aria-label="Instellingen">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 6.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm7.1 4.4-1.55-.9a5.6 5.6 0 0 0 0-.5l1.55-.9a.6.6 0 0 0 .22-.82l-1.5-2.6a.6.6 0 0 0-.82-.22l-1.56.9a5.8 5.8 0 0 0-.43-.25V4.05a.6.6 0 0 0-.6-.6h-3a.6.6 0 0 0-.6.6v1.8l-.43.25-1.56-.9a.6.6 0 0 0-.82.22l-1.5 2.6a.6.6 0 0 0 .22.82l1.55.9v.5l-1.55.9a.6.6 0 0 0-.22.82l1.5 2.6c.17.29.53.38.82.22l1.56-.9.43.25v1.8c0 .33.27.6.6.6h3a.6.6 0 0 0 .6-.6v-1.8l.43-.25 1.56.9c.29.16.65.07.82-.22l1.5-2.6a.6.6 0 0 0-.22-.82Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
-      </button>
-    </div>
     <label class="search">
       <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m13.2 13.2 3.3 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       <input id="search" type="search" placeholder="Zoeken in meetings" autocomplete="off">
     </label>
-    <section class="folders" aria-label="Mappen">
-      <div class="folders-head"><span>Mappen</span>
-        <button class="icon-btn small" id="newFolderBtn" type="button" title="Nieuwe map" aria-label="Nieuwe map">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </button>
-      </div>
+    <nav class="tree" aria-label="Mappen en meetings">
       <div class="folder-list" id="folders"></div>
-    </section>
-    <nav class="meetings" id="meetings" aria-label="Meetings"></nav>
+      <div class="meetings" id="meetings"></div>
+    </nav>
   </aside>
 
   <main class="main" id="main">
@@ -52,11 +42,16 @@
         <div class="title-row">
           <h1 class="title" id="title" spellcheck="false"></h1>
           <div class="menu-wrap">
-            <button class="icon-btn" id="moreBtn" type="button" aria-label="Meer acties" aria-haspopup="menu">
+            <button class="icon-btn more" id="moreBtn" type="button" aria-label="Meer acties voor deze meeting" aria-haspopup="menu" title="Meer acties">
               <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.5" fill="currentColor"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><circle cx="15.5" cy="10" r="1.5" fill="currentColor"/></svg>
             </button>
             <div class="menu" id="moreMenu" role="menu" hidden>
               <button role="menuitem" data-cmd="rename">Naam wijzigen</button>
+              <div class="submenu-wrap">
+                <button role="menuitem" class="has-sub" aria-haspopup="menu">Verplaatsen naar map</button>
+                <div class="menu sub" id="moveMenu" role="menu"></div>
+              </div>
+              <hr>
               <button role="menuitem" data-cmd="resummarize">Samenvatting opnieuw maken</button>
               <button role="menuitem" data-cmd="reprocess">Opnieuw transcriberen</button>
               <button role="menuitem" data-cmd="reveal">Toon bestanden in Finder</button>
@@ -65,13 +60,7 @@
             </div>
           </div>
         </div>
-        <div class="meta-row">
-          <p class="meta" id="meta"></p>
-          <label class="folder-pick" title="Map">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 5.5c0-.97.78-1.75 1.75-1.75h3.3l1.7 1.8h6c.97 0 1.75.78 1.75 1.75v7.2c0 .97-.78 1.75-1.75 1.75h-11c-.97 0-1.75-.78-1.75-1.75Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
-            <select id="folderPick" aria-label="Map van deze meeting"></select>
-          </label>
-        </div>
+        <p class="meta" id="meta"></p>
         <div class="working" id="working" hidden><span class="spinner" aria-hidden="true"></span><span id="workingText"></span></div>
         <div class="strip" id="strip" role="img" aria-label="Wie sprak wanneer"></div>
         <div class="strip-legend" id="legend"></div>
@@ -120,6 +109,12 @@
       <label class="inline-check"><input type="checkbox" id="sLogin"> Openen bij inloggen</label>
       <p class="hint">Voicenotes start dan op de achtergrond, met alleen het icoon in de menubalk.</p>
     </div>
+    <div class="field-row">
+      <div class="field"><label for="sTheme">Weergave</label>
+        <select id="sTheme"><option value="dark">Donker</option><option value="light">Licht</option><option value="system">Zoals macOS</option></select></div>
+      <div class="field check"><label><input type="checkbox" id="sHideShare"> Onzichtbaar bij scherm delen</label>
+        <p class="hint">Deelnemers zien Voicenotes niet als je je scherm deelt.</p></div>
+    </div>
     <div class="field"><label for="sName">Jouw naam</label><input id="sName" type="text"><p class="hint">Zo heet je in transcripten. Je stem komt van je eigen microfoon.</p></div>
     <div class="field"><label for="sVocab">Namen en vaktermen</label><textarea id="sVocab" rows="3" placeholder="Eén per regel, bijvoorbeeld collega's, klanten of producten"></textarea><p class="hint">Helpt bij het goed spellen van namen en jargon.</p></div>
     <div class="field"><label for="sWhisper">Transcriptie na afloop</label>
@@ -152,11 +147,25 @@
     </div>
     <div class="field"><label for="sThreshold">Hoe zeker moet stemherkenning zijn?</label>
       <div class="range"><span>Sneller herkennen</span><input id="sThreshold" type="range" min="0.3" max="0.9" step="0.05"><span>Minder vergissingen</span></div></div>
-    <div class="field"><label>Bekende stemmen</label><div class="profiles" id="sProfiles"></div></div>
+    <div class="field"><label>Personen en stemmen</label><p class="hint">Beheer wie je kent, voeg mensen samen of laat een stem vergeten in <a href="#" id="openPeopleFromSettings">Personen</a>.</p></div>
     </div>
     <div class="sheet-actions"><button class="ghost" value="cancel" type="button" id="settingsCancel">Annuleren</button><button class="primary" id="settingsSave" type="button">Opslaan</button></div>
   </form>
 </dialog>
+
+<dialog class="sheet" id="peopleSheet">
+  <form method="dialog" id="peopleForm">
+    <div class="sheet-body">
+      <h2>Personen</h2>
+      <p class="hint people-intro">Mensen die je hier kent, kun je in elke meeting aan een spreker koppelen. Hernoem je iemand, dan veranderen de namen in al je samenvattingen en transcripten mee.</p>
+      <div class="person-add"><input type="text" id="newPersonName" placeholder="Naam van een nieuwe persoon" aria-label="Naam van een nieuwe persoon"><button class="ghost" type="button" id="addPersonBtn">Toevoegen</button></div>
+      <div class="people-list" id="peopleList"></div>
+    </div>
+    <div class="sheet-actions"><button class="primary" type="button" id="peopleDone">Klaar</button></div>
+  </form>
+</dialog>
+
+<datalist id="peopleNames"></datalist>
 
 <dialog class="sheet small" id="confirm">
   <h2 id="confirmTitle"></h2>

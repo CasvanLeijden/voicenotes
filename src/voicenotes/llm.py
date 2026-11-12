@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+from pathlib import Path
 
 import numpy as np
 from openai import OpenAI
@@ -30,9 +32,12 @@ Schrijf in het Nederlands een samenvatting in Markdown met precies deze kopjes:
 
 Verzin niets dat niet in de notities staat."""
 
-ASK_PROMPT = """Je beantwoordt vragen over meetings op basis van transcriptfragmenten.
-Antwoord in het Nederlands, kort en concreet. Noem wie iets zei als dat relevant is.
-Staat het antwoord niet in de fragmenten, zeg dat dan eerlijk."""
+ASK_PROMPT = """Je beantwoordt vragen over meetings op basis van hun transcripten.
+Antwoord in het Nederlands, concreet en volledig. Noem wie iets zei als dat relevant is.
+Let op: het transcript is automatisch gemaakt en kan namen, afkortingen en vaktermen verkeerd
+gespeld hebben. Zoek daarom ook naar woorden die erop lijken of hetzelfde klinken (bijvoorbeeld
+"HAP" voor "HAB", of "Westerduin" voor "Westerdijn") en ga ervan uit dat die bedoeld worden.
+Staat het antwoord echt niet in het transcript, zeg dat dan eerlijk."""
 
 TITLE_PROMPT = """Bedenk een korte, specifieke titel voor deze meeting: 2 tot 6 woorden die het
 belangrijkste onderwerp noemen (bijvoorbeeld een project, klant of besluit), geen algemene titel
@@ -41,18 +46,29 @@ Schrijf de titel in deze taal: {language}. Dat is de taal die in de meeting gesp
 ook als de samenvatting in een andere taal is.
 Geef alleen de titel, zonder aanhalingstekens, punt of uitleg."""
 
+CODES_NOTE = """
+Sprekers staan in het transcript als codes, zoals [S1] en [S2]. Verwijs in je tekst naar
+mensen altijd met die code, inclusief de vierkante haken (bijvoorbeeld "[S2] stelde voor om…"
+of "- [ ] [S1]: offerte sturen"). Schrijf nooit hun naam uit; de namen worden later ingevuld."""
+
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 DEFAULT_CONTEXT = 4096
+# Max tokens a model may spend thinking before it must answer (~1-2 min on an M4).
+THINK_BUDGET = 2048
+SUMMARY_TOKENS = 3000   # room for a full meeting summary
 # Room for the system prompt, the instructions and the model's answer.
 RESERVED_TOKENS = 1800
 # Dutch transcript text is roughly 3 characters per token for these tokenizers (conservative).
 CHARS_PER_TOKEN = 3.0
 
 
-def loaded_models(base_url: str, timeout: float = 3.0) -> list[dict]:
-    """LM Studio's native API lists loaded instances with their context length."""
+LMS_CLI = Path.home() / ".lmstudio" / "bin" / "lms"
+
+
+def lm_models(base_url: str, timeout: float = 3.0) -> list[dict]:
+    """All chat models LM Studio knows (loaded or not), from its native API."""
     import json
     import urllib.request
 
@@ -62,7 +78,12 @@ def loaded_models(base_url: str, timeout: float = 3.0) -> list[dict]:
             data = json.load(r)["data"]
     except Exception:
         return []
-    return [m for m in data if m.get("state") == "loaded" and m.get("type") in ("llm", "vlm")]
+    return [m for m in data if m.get("type") in ("llm", "vlm")]
+
+
+def loaded_models(base_url: str, timeout: float = 3.0) -> list[dict]:
+    """Loaded instances with their context length."""
+    return [m for m in lm_models(base_url, timeout) if m.get("state") == "loaded"]
 
 
 def chunk_chars_for(context: int) -> int:
@@ -79,6 +100,11 @@ class LLM:
 
     def _resolve(self) -> None:
         loaded = loaded_models(self.cfg.lmstudio_url)
+        if not loaded or (self._model and not any(m["id"] == self._model for m in loaded)):
+            # Nothing (or not the chosen model) loaded: let LM Studio load it now, so we can
+            # read the real context length instead of guessing a small default.
+            self._trigger_load()
+            loaded = loaded_models(self.cfg.lmstudio_url)
         if self._model is None:
             if loaded:
                 # Several instances loaded: use the one with the most context.
@@ -92,6 +118,37 @@ class LLM:
                 self._model = llms[0]
         match = [m for m in loaded if m["id"] == self._model]
         self._context = (match[0].get("loaded_context_length") if match else None) or DEFAULT_CONTEXT
+
+    def _trigger_load(self) -> None:
+        target = self._model
+        if target is None:
+            available = lm_models(self.cfg.lmstudio_url)
+            if not available:
+                return
+            target = available[0]["id"]
+        try:  # LM Studio loads a model on first use ("just in time")
+            self.client.chat.completions.create(
+                model=target, messages=[{"role": "user", "content": "ok"}], max_tokens=1)
+        except Exception:
+            pass
+
+    def ensure_context(self, needed_tokens: int, on_progress=None) -> int:
+        """Make sure the loaded model has at least `needed_tokens` of context, reloading it
+        with a bigger context through the `lms` CLI if necessary. Returns the context."""
+        if self.context >= needed_tokens or not LMS_CLI.exists():
+            return self.context
+        info = next((m for m in lm_models(self.cfg.lmstudio_url) if m["id"] == self._model), {})
+        max_ctx = info.get("max_context_length") or needed_tokens
+        new_ctx = min(max_ctx, max(32_768, int(needed_tokens * 1.25)))
+        key = self._model.split(":")[0]   # instance "google/gemma-4-e4b:2" -> model "google/gemma-4-e4b"
+        if on_progress:
+            on_progress(f"Model opnieuw laden met {new_ctx} tokens context")
+        subprocess.run([str(LMS_CLI), "unload", self._model], capture_output=True, timeout=60)
+        subprocess.run([str(LMS_CLI), "load", key, "--context-length", str(new_ctx),
+                        "--identifier", self._model, "-y"], capture_output=True, timeout=300)
+        self._context = None
+        self._resolve()
+        return self.context
 
     @property
     def model(self) -> str:
@@ -110,19 +167,28 @@ class LLM:
         return self.cfg.chunk_chars_override or chunk_chars_for(self.context)
 
     def chat(self, system: str, user: str, temperature: float = 0.2,
-             think: bool | None = None) -> str:
-        """think: None = follow the llm_thinking setting."""
+             think: bool | None = None, max_answer_tokens: int = 1500) -> str:
+        """think: None = follow the llm_thinking setting.
+
+        Output is always capped: max_answer_tokens for the answer, plus THINK_BUDGET when the
+        model may think first. Some models (Qwen3.5-9B) otherwise think for 10+ minutes and
+        return nothing; if the thinking budget runs out, we ask again without thinking.
+        """
         think = self.cfg.llm_thinking if think is None else think
         kwargs = dict(
             model=self.model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=temperature,
+            max_tokens=max_answer_tokens + (THINK_BUDGET if think else 0),
         )
-        # Without thinking, reasoning models answer ~5x faster (most tokens go to thinking),
-        # but summaries are a bit less careful. Default: think.
         if think:
-            resp = self.client.chat.completions.create(**kwargs)
-        elif self._reasoning_off is not False:
+            text, finished = self._chat_thinking(kwargs)
+            if text and finished:
+                return text
+            print(f"{self.model}: denkbudget op of geen antwoord, opnieuw zonder nadenken")
+            return self.chat(system, user, temperature=temperature, think=False,
+                             max_answer_tokens=max_answer_tokens)
+        if self._reasoning_off is not False:
             try:
                 resp = self.client.chat.completions.create(reasoning_effort="none", **kwargs)
                 self._reasoning_off = True
@@ -131,10 +197,40 @@ class LLM:
                 resp = self.client.chat.completions.create(**kwargs)
         else:
             resp = self.client.chat.completions.create(**kwargs)
-        text = resp.choices[0].message.content or ""
-        return _THINK_RE.sub("", text).strip()
+        return _THINK_RE.sub("", resp.choices[0].message.content or "").strip()
 
-    def summarize(self, chunks: list[str], on_progress=None) -> str:
+    def _chat_thinking(self, kwargs: dict) -> tuple[str, bool]:
+        """Stream the answer and stop as soon as the thinking exceeds THINK_BUDGET.
+        Closing the stream makes LM Studio stop generating. Returns (text, finished)."""
+        stream = self.client.chat.completions.create(stream=True, **kwargs)
+        thinking = 0
+        inline = False   # thinking inside <think>...</think> in the content (some templates)
+        parts: list[str] = []
+        finish = None
+        try:
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                extra = getattr(delta, "model_extra", None) or {}
+                reasoning = extra.get("reasoning_content") or extra.get("reasoning") or ""
+                content = delta.content or ""
+                if content:
+                    parts.append(content)
+                    inline = ("<think>" in content or inline) and "</think>" not in content
+                if reasoning or inline:
+                    thinking += 1   # LM Studio streams about one token per chunk
+                if thinking > THINK_BUDGET:
+                    return "", False
+                finish = chunk.choices[0].finish_reason or finish
+        finally:
+            stream.close()
+        text = _THINK_RE.sub("", "".join(parts)).strip()
+        return text, finish != "length"
+
+    def summarize(self, chunks: list[str], on_progress=None, legend: str = "") -> str:
+        map_prompt, reduce_prompt = MAP_PROMPT + CODES_NOTE, REDUCE_PROMPT + CODES_NOTE
+        who = f"Sprekers:\n{legend}\n\n" if legend else ""
         if len(chunks) == 1:
             notes = [chunks[0]]
         else:
@@ -142,7 +238,7 @@ class LLM:
             for i, chunk in enumerate(chunks, 1):
                 if on_progress:
                     on_progress(f"Deel {i}/{len(chunks)} samenvatten")
-                notes.append(self.chat(MAP_PROMPT, chunk))
+                notes.append(self.chat(map_prompt, who + chunk, max_answer_tokens=SUMMARY_TOKENS))
         if on_progress:
             on_progress("Eindsamenvatting maken")
         # Reduce in rounds when the notes are too long for the context window.
@@ -157,9 +253,11 @@ class LLM:
             groups.append(cur)
             if len(groups) == len(notes):  # can't shrink by grouping; stop
                 break
-            notes = [self.chat(MAP_PROMPT, "\n\n".join(g)) for g in groups]
+            notes = [self.chat(map_prompt, who + "\n\n".join(g), max_answer_tokens=SUMMARY_TOKENS)
+                     for g in groups]
         label = "Transcript" if len(chunks) == 1 else "Notities"
-        return self.chat(REDUCE_PROMPT, f"{label}:\n\n" + "\n\n---\n\n".join(notes))
+        return self.chat(reduce_prompt, who + f"{label}:\n\n" + "\n\n---\n\n".join(notes),
+                         max_answer_tokens=SUMMARY_TOKENS)
 
     def title(self, transcript_excerpt: str, summary: str = "", language: str = "nl") -> str:
         from .asr.final import language_name
@@ -167,7 +265,8 @@ class LLM:
         user = f"Transcript (begin):\n{transcript_excerpt}"
         if summary:
             user += f"\n\nSamenvatting:\n{summary}"
-        return clean_title(self.chat(TITLE_PROMPT.format(language=name), user, temperature=0.3))
+        return clean_title(self.chat(TITLE_PROMPT.format(language=name), user, temperature=0.3,
+                                     max_answer_tokens=60))
 
     def embed(self, texts: list[str], *, query: bool = False) -> np.ndarray:
         # nomic-embed expects task prefixes.
@@ -180,7 +279,8 @@ class LLM:
 
     def answer(self, question: str, context: list[str]) -> str:
         ctx = "\n\n---\n\n".join(context)
-        return self.chat(ASK_PROMPT, f"Fragmenten:\n\n{ctx}\n\nVraag: {question}")
+        return self.chat(ASK_PROMPT, f"Transcript(en):\n\n{ctx}\n\nVraag: {question}",
+                         max_answer_tokens=1500)
 
 
 def clean_title(raw: str, max_len: int = 70) -> str:

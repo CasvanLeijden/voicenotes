@@ -17,7 +17,7 @@ from . import config, pipeline
 from .asr.final import Segment
 from .detect import APP_NAMES, BROWSERS, CallDetector, MicPoller
 from .audio.recorder import Recorder
-from .store import Store
+from .store import MIC_LABEL, OTHERS_LABEL, Store
 from .transcript import drop_echo
 from .ui.bridge import Bridge
 from .ui.hud import DictationHUD
@@ -107,7 +107,8 @@ class Controller(QObject):
         super().__init__()
         self.app = app
         self.cfg = config.load()
-        self.store = Store(self.cfg.db_path)
+        self.store = Store(self.cfg.db_path, my_name=self.cfg.my_name)
+        self.store.ensure_me(self.cfg.my_name)
         self.busy: set[int] = set()
         self.progress_text: dict[int, str] = {}
         self.jobs: list[CliJob] = []
@@ -127,6 +128,8 @@ class Controller(QObject):
         self._apply_theme()
 
         self._build_tray()
+        self.selected_meeting: int | None = None
+        self._build_menubar()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
 
@@ -179,14 +182,97 @@ class Controller(QObject):
         self.tray.setContextMenu(menu)
         self.tray.show()
 
+    # --- macOS menu bar ----------------------------------------------------
+
+    def _build_menubar(self) -> None:
+        """The app's options live in the real menu bar at the top of the screen."""
+        from PySide6.QtGui import QKeySequence
+        from PySide6.QtWidgets import QMenuBar
+        bar = QMenuBar(None)   # parentless = the global macOS menu bar
+        self.menubar = bar
+        self.meeting_actions: list[QAction] = []
+
+        def act(menu, text, slot, shortcut=None, role=None, meeting=False, checkable=False):
+            a = QAction(text, bar)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            if role is not None:
+                a.setMenuRole(role)
+            if checkable:
+                a.setCheckable(True)
+            a.triggered.connect(slot)
+            menu.addAction(a)
+            if meeting:
+                self.meeting_actions.append(a)
+            return a
+
+        cmd = lambda c: (lambda *_: self.bridge.command.emit(c))  # noqa: E731
+        app_menu = bar.addMenu("Voicenotes")
+        act(app_menu, "Instellingen…", cmd("settings"), "Ctrl+,", QAction.MenuRole.PreferencesRole)
+        act(app_menu, "Voicenotes stoppen", self.quit, "Ctrl+Q", QAction.MenuRole.QuitRole)
+
+        file_menu = bar.addMenu("Archief")
+        self.menu_record = act(file_menu, "Opname starten", lambda *_: self.start_recording(), "Ctrl+R")
+        act(file_menu, "Bestand importeren…", self.pick_and_import, "Ctrl+O")
+        file_menu.addSeparator()
+        act(file_menu, "Nieuwe map", cmd("newFolder"), "Ctrl+Shift+N")
+        act(file_menu, "Zoeken", cmd("find"), "Ctrl+F")
+
+        view = bar.addMenu("Weergave")
+        act(view, "Personen…", cmd("people"), "Ctrl+Shift+P")
+        view.addSeparator()
+        from PySide6.QtGui import QActionGroup
+        group = QActionGroup(bar)
+        self.theme_actions = {}
+        for key, label, sc in (("dark", "Donker", "Ctrl+Shift+D"), ("light", "Licht", "Ctrl+Shift+L"),
+                               ("system", "Zoals macOS", None)):
+            a = act(view, label, lambda _=False, k=key: self.set_theme(k), sc, checkable=True)
+            group.addAction(a)
+            a.setChecked(self.cfg.theme == key)
+            self.theme_actions[key] = a
+        view.addSeparator()
+        self.menu_hide_share = act(view, "Verbergen bij scherm delen", self._toggle_share_hiding,
+                                   checkable=True)
+        self.menu_hide_share.setChecked(self.cfg.hide_from_screen_share)
+        self.set_selection(None, None)
+
+    def set_selection(self, mid: int | None, folder: int | None) -> None:
+        self.selected_meeting = mid
+        for a in self.meeting_actions:
+            a.setEnabled(mid is not None)
+
+    def set_theme(self, theme: str) -> None:
+        self.cfg.theme = theme
+        config.save(self.cfg)
+        self.theme_actions[theme].setChecked(True)
+        self._apply_theme()
+
+    def _toggle_share_hiding(self, checked: bool) -> None:
+        self.cfg.hide_from_screen_share = checked
+        config.save(self.cfg)
+        self._apply_theme()
+        self.bridge.status.emit("Voicenotes is onzichtbaar bij scherm delen" if checked
+                                else "Voicenotes is weer zichtbaar bij scherm delen")
+
+    def glass(self) -> str:
+        """Dark keeps the calm frosted look; light gets clear Liquid Glass."""
+        return "frosted" if self.theme_name() == "dark" else "clear"
+
+    def body_classes(self) -> str:
+        return f"{self.theme_name()} glass-{self.glass()}"
+
     def theme_name(self) -> str:
+        if self.cfg.theme in ("dark", "light"):
+            return self.cfg.theme
         scheme = QGuiApplication.styleHints().colorScheme()
         return "dark" if scheme == Qt.ColorScheme.Dark else "light"
 
     def _apply_theme(self) -> None:
+        from .ui.native import set_overlays_hidden_from_capture
         name = self.theme_name()
-        self.window.set_dark(name == "dark")
-        self.bridge.theme.emit(name)
+        self.window.apply_chrome(name == "dark", self.cfg.hide_from_screen_share, self.glass())
+        set_overlays_hidden_from_capture(self.cfg.hide_from_screen_share)
+        self.bridge.theme.emit(self.body_classes())
 
     def show_window(self) -> None:
         _set_dock_visible(True)
@@ -250,6 +336,7 @@ class Controller(QObject):
         self.dict_spans = []
         self.tray.setIcon(_icon(True))
         self.rec_item.setText("Opname stoppen en verwerken")
+        self.menu_record.setEnabled(False)   # stop only via "Stoppen en verwerken"
         self.time_item.setVisible(True)
         self.timer.start(100)
         self.bridge.recording.emit(json.dumps({"active": True, "id": m.id}))
@@ -271,17 +358,18 @@ class Controller(QObject):
         self.bridge.live.emit(json.dumps(self.live_payload()))
 
     def _live_as_segments(self) -> list[Segment]:
-        mic = [Segment(s.start, s.end, s.text, self.cfg.my_name)
+        mic = [Segment(s.start, s.end, s.text, MIC_LABEL)
                for s in self.live_segments if s.channel == "mic"]
         mic = pipeline.drop_dictation(mic, self.dict_spans)
-        system = [Segment(s.start, s.end, s.text, OTHERS)
+        system = [Segment(s.start, s.end, s.text, OTHERS_LABEL)
                   for s in self.live_segments if s.channel == "system"]
         return sorted(drop_echo(mic, system) + system, key=lambda s: s.start)
 
     def live_payload(self) -> dict:
+        names = {MIC_LABEL: self.cfg.my_name, OTHERS_LABEL: OTHERS}
         return {"id": self.rec_meeting,
-                "segments": [{"start": s.start, "end": s.end, "speaker": s.speaker, "text": s.text}
-                             for s in self._live_as_segments()]}
+                "segments": [{"start": s.start, "end": s.end, "speaker": names[s.speaker],
+                              "text": s.text} for s in self._live_as_segments()]}
 
     def stop_recording(self, process: bool = True) -> int | None:
         if not self.recorder:
@@ -305,11 +393,19 @@ class Controller(QObject):
         # Keep the live transcript as a first version until processing replaces it.
         live = self._live_as_segments()
         if live:
+            self.store.save_meeting_speakers(mid, [])
+            if any(s.speaker == MIC_LABEL for s in live):
+                self.store.upsert_meeting_speaker(mid, MIC_LABEL, self.cfg.my_name,
+                                                  self.store.ensure_me(self.cfg.my_name))
+            if any(s.speaker == OTHERS_LABEL for s in live):
+                self.store.upsert_meeting_speaker(mid, OTHERS_LABEL, OTHERS)
             self.store.save_segments(mid, live)
+            self.store.assign_tags(mid)
         self.rec_meeting = None
         self.tray.setIcon(_icon(False))
         self.tray.setToolTip("Voicenotes")
         self.rec_item.setText("Opname starten")
+        self.menu_record.setEnabled(True)
         self.time_item.setVisible(False)
         self.bridge.recording.emit(json.dumps({"active": False, "id": mid}))
         if process:
@@ -525,28 +621,25 @@ class Controller(QObject):
     def resummarize(self, mid: int) -> None:
         self.run_job(["resummarize", str(mid)], mid, "Samenvatten")
 
-    def name_speaker(self, mid: int, old: str, new: str) -> None:
-        self.busy.add(mid)
-        self.progress_text[mid] = f"{new} opslaan en samenvatting bijwerken…"
+    def assign_speaker(self, mid: int, label: str, person: str) -> None:
+        try:
+            pipeline.assign_speaker(self.cfg, self.store, mid, label, person.strip() or None)
+        except Exception as e:
+            self.bridge.status.emit(f"Naam koppelen lukte niet: {e}")
+            return
+        self.bridge.peopleChanged.emit()
         self.changed(mid)
-        cfg = self.cfg
 
-        def work():
-            pipeline.name_speaker(cfg, Store(cfg.db_path), mid, old, new, progress=lambda _: None)
-
-        def finish(msg: str):
-            self.busy.discard(mid)
-            self.progress_text.pop(mid, None)
-            self.bridge.status.emit(msg)
-            self.changed(mid)
-
-        run_async(work, lambda _: finish(f"{new} wordt voortaan herkend"),
-                  lambda e: finish(f"Naam opslaan mislukt: {e}"))
+    def people_changed(self) -> None:
+        """People renamed/merged/deleted: every meeting shows the new names right away."""
+        pipeline.refresh_people(self.store)
+        self.bridge.peopleChanged.emit()
+        self.changed()
 
     def ask(self, question: str, mid: int | None, on_done, on_error,
             folder_id: int | None = None) -> None:
         cfg = self.cfg
-        run_async(lambda: pipeline.ask(cfg, Store(cfg.db_path), question, mid, folder_id=folder_id),
+        run_async(lambda: pipeline.ask(cfg, Store(cfg.db_path, my_name=cfg.my_name), question, mid, folder_id=folder_id),
                   on_done, on_error)
 
     def delete_meeting(self, mid: int) -> None:
@@ -570,6 +663,7 @@ class Controller(QObject):
                 "speaker_threshold": c.speaker_threshold,
                 "live_transcription": c.live_transcription,
                 "detect_calls": c.detect_calls,
+                "theme": c.theme, "hide_from_screen_share": c.hide_from_screen_share,
                 "start_at_login": _login_enabled(), "app_installed": _app_installed(),
                 "dictation": c.dictation, "dictation_cleanup": c.dictation_cleanup,
                 "dictation_model": c.dictation_model,
@@ -577,16 +671,16 @@ class Controller(QObject):
                 "call_apps": [{"name": a,
                                "mode": "auto" if a in c.auto_record_apps
                                else "ignore" if a in c.ignored_apps else "ask"}
-                              for a in APP_NAMES],
-                "profiles": sorted(p[1] for p in self.store.get_profiles())}
+                              for a in APP_NAMES]}
 
     def save_settings(self, data: dict) -> None:
         c = self.cfg
         c.my_name = (data.get("my_name") or "").strip() or "Ik"
+        self.store.ensure_me(c.my_name)
         c.whisper_model = data.get("whisper_model") or c.whisper_model
         c.vocabulary = [v.strip() for v in data.get("vocabulary", []) if v.strip()]
         c.llm_model = data.get("llm_model", "")
-        c.llm_thinking = bool(data.get("llm_thinking", True))
+        c.llm_thinking = bool(data.get("llm_thinking", False))
         c.diarize = bool(data.get("diarize", True))
         c.speaker_threshold = float(data.get("speaker_threshold", c.speaker_threshold))
         c.live_transcription = bool(data.get("live_transcription", True))
@@ -600,6 +694,10 @@ class Controller(QObject):
                 run_async(lambda: warm_up(cfg.dictation_model, cfg.language),
                           lambda _: None, lambda e: print(f"Dicteermodel laden mislukt: {e}"))
         c.detect_calls = bool(data.get("detect_calls", True))
+        c.theme = data.get("theme") if data.get("theme") in ("dark", "light", "system") else c.theme
+        self.theme_actions[c.theme].setChecked(True)
+        c.hide_from_screen_share = bool(data.get("hide_from_screen_share", True))
+        self.menu_hide_share.setChecked(c.hide_from_screen_share)
         if "start_at_login" in data and _app_installed():
             from . import install
             try:
@@ -611,9 +709,9 @@ class Controller(QObject):
         c.ignored_apps = [a for a, m in modes.items() if m == "ignore"]
         self._update_poller()
         self._update_dictation(prompt=True)
-        for name in data.get("forget_profiles", []):
-            self.store.delete_profile(name)
         config.save(c)
+        self._apply_theme()
+        pipeline.refresh_people(self.store)
         self.bridge.status.emit("Instellingen opgeslagen")
         self.changed()
 
@@ -717,7 +815,32 @@ def _install_reopen_handler(ctl: "Controller"):
         return None
 
 
+def _run_as_python(argv: list[str]) -> bool:
+    """Apps built with an older launcher route interpreter-style calls such as
+    `<app> -s -c "from multiprocessing.resource_tracker import main; main(5)"` here instead of
+    to the interpreter. Handle -c / -m ourselves; returns True if argv was such a call."""
+    args = argv[1:]
+    if not args or not args[0].startswith("-") or args[0] == "--hidden":
+        return False
+    i = 0
+    while i < len(args) and args[i] not in ("-c", "-m") and args[i].startswith("-"):
+        i += 1   # skip flags like -s, -E, -B, -u
+    if i + 1 >= len(args):
+        return True  # unknown interpreter call: do nothing rather than start a second app
+    mode, target, rest = args[i], args[i + 1], args[i + 2:]
+    if mode == "-c":
+        sys.argv = ["-c", *rest]
+        exec(compile(target, "<string>", "exec"), {"__name__": "__main__"})
+    else:
+        import runpy
+        sys.argv = [target, *rest]
+        runpy.run_module(target, run_name="__main__", alter_sys=True)
+    return True
+
+
 def main() -> None:
+    if _run_as_python(sys.argv):
+        return
     _log_to_file()
     app = QApplication(sys.argv)
     app.setApplicationName("Voicenotes")

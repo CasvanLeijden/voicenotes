@@ -42,7 +42,10 @@ let pyMain = unsafeBitCast(sym, to: PyBytesMain.self)
 
 var args = CommandLine.arguments
 let first = args.count > 1 ? args[1] : ""
-let pythonStyle = first == "-m" || first == "-c" || first.hasSuffix(".py") || first == "-u"
+// Any interpreter flag (-c, -m, -s, -E, -I, -u, ...) means "act like python": e.g.
+// multiprocessing starts helpers as `<sys.executable> -s -c ...`. Only --hidden is ours.
+let pythonStyle = (first.hasPrefix("-") && first != "--hidden" && !first.hasPrefix("-psn_"))
+    || first.hasSuffix(".py")
 var pyArgs: [String]
 if pythonStyle {
     pyArgs = args

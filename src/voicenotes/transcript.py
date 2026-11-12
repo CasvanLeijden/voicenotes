@@ -24,16 +24,23 @@ def merge_turns(segments: list[Segment], max_gap: float = 1.5) -> list[Segment]:
     return turns
 
 
-def to_lines(segments: list[Segment]) -> list[str]:
+def relabel(segments: list[Segment], names: dict[str, str] | None) -> list[Segment]:
+    """Speaker labels -> names (or codes). Labels mapped to the same name merge into one."""
+    if not names:
+        return segments
+    return [Segment(s.start, s.end, s.text, names.get(s.speaker, s.speaker)) for s in segments]
+
+
+def to_lines(segments: list[Segment], names: dict[str, str] | None = None) -> list[str]:
     lines = []
-    for t in merge_turns(segments):
+    for t in merge_turns(relabel(segments, names)):
         who = f"{t.speaker}: " if t.speaker else ""
         lines.append(f"[{fmt_time(t.start)}] {who}{t.text}")
     return lines
 
 
-def to_markdown(title: str, segments: list[Segment]) -> str:
-    return f"# {title}\n\n" + "\n\n".join(to_lines(segments)) + "\n"
+def to_markdown(title: str, segments: list[Segment], names: dict[str, str] | None = None) -> str:
+    return f"# {title}\n\n" + "\n\n".join(to_lines(segments, names)) + "\n"
 
 
 def chunk_lines(lines: list[str], max_chars: int) -> list[str]:

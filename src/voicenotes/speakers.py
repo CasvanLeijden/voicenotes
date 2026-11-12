@@ -1,4 +1,4 @@
-"""Voice profiles: remember speakers across meetings via embedding similarity."""
+"""Voice recognition: link voices in a meeting to known people via embedding similarity."""
 from __future__ import annotations
 
 import numpy as np
@@ -6,6 +6,8 @@ import numpy as np
 from .store import Store
 
 DEFAULT_THRESHOLD = 0.55
+# Shorter speakers give unreliable voice prints; don't let them shape a person's voice.
+MIN_LEARN_SECONDS = 20.0
 
 
 def _norm(v: np.ndarray) -> np.ndarray:
@@ -13,43 +15,38 @@ def _norm(v: np.ndarray) -> np.ndarray:
 
 
 def match(store: Store, embeddings: dict[str, np.ndarray],
-          threshold: float = DEFAULT_THRESHOLD) -> dict[str, tuple[str, int | None]]:
-    """Map diarization labels to (display name, profile id).
+          threshold: float = DEFAULT_THRESHOLD) -> dict[str, int | None]:
+    """Map diarization labels to person ids (None = unknown voice).
 
-    Greedy one-to-one matching on cosine similarity; unknown voices become "Spreker N".
+    Greedy one-to-one matching on cosine similarity.
     """
-    profiles = store.get_profiles()
+    profiles = store.voice_profiles()
     pairs = []
     for label, emb in embeddings.items():
         e = _norm(emb)
-        for pid, name, pemb, _ in profiles:
-            pairs.append((float(e @ _norm(pemb)), label, pid, name))
+        for pid, _name, pemb, _ in profiles:
+            pairs.append((float(e @ _norm(pemb)), label, pid))
     pairs.sort(reverse=True)
 
-    result: dict[str, tuple[str, int | None]] = {}
+    result: dict[str, int | None] = {label: None for label in embeddings}
     used: set[int] = set()
-    for sim, label, pid, name in pairs:
+    for sim, label, pid in pairs:
         if sim < threshold:
             break
-        if label in result or pid in used:
+        if result[label] is not None or pid in used:
             continue
-        result[label] = (name, pid)
+        result[label] = pid
         used.add(pid)
-
-    n = 1
-    for label in sorted(embeddings):
-        if label not in result:
-            result[label] = (f"Spreker {n}", None)
-            n += 1
     return result
 
 
-def learn(store: Store, name: str, embedding: np.ndarray) -> int:
-    """Add a voice sample to the named profile (running mean), creating it if needed."""
-    existing = store.get_profile_by_name(name)
+def learn(store: Store, person_id: int, embedding: np.ndarray) -> None:
+    """Add a voice sample to a person (running mean)."""
+    person = store.get_person(person_id)
     e = _norm(embedding.astype(np.float32))
-    if existing is None:
-        return store.create_profile(name, e)
-    pid, _, pemb, n = existing
-    store.update_profile(pid, _norm((pemb * n + e) / (n + 1)), n + 1)
-    return pid
+    if person["embedding"] is None:
+        store.set_person_voice(person_id, e, 1)
+        return
+    old = np.frombuffer(person["embedding"], dtype=np.float32)
+    n = max(person["samples"], 1)
+    store.set_person_voice(person_id, _norm((old * n + e) / (n + 1)), n + 1)

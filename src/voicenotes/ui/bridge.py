@@ -7,8 +7,19 @@ from typing import TYPE_CHECKING
 import markdown as md
 from PySide6.QtCore import QObject, Signal, Slot
 
+from ..names import render
+from ..store import MIC_LABEL
+
 if TYPE_CHECKING:
     from ..app import Controller
+
+
+def _plain(markdown_text: str) -> str:
+    """Markdown -> plain text for searching."""
+    import re
+    t = re.sub(r"^#+\s*", "", markdown_text, flags=re.M)
+    t = re.sub(r"^\s*[-*]\s*(\[[ x]\]\s*)?", "", t, flags=re.M)
+    return re.sub(r"[*_`]", "", t)
 
 
 def md_html(text: str) -> str:
@@ -22,6 +33,7 @@ class Bridge(QObject):
     # Python -> JS
     meetingsChanged = Signal()
     meetingChanged = Signal(int)
+    peopleChanged = Signal()
     status = Signal(str)
     recording = Signal(str)      # {"active": bool, "id": int|null}
     live = Signal(str)           # {"id": int, "segments": [...]}
@@ -29,6 +41,7 @@ class Bridge(QObject):
     progress = Signal(str)       # {"id": int|null, "label": str, "line": str, "done": bool, "ok": bool}
     answer = Signal(str)         # {"req": str, "html": str, "error": str|null}
     theme = Signal(str)          # "light" | "dark"
+    command = Signal(str)        # menu bar action for the page: "rename", "tab:summary", ...
 
     def __init__(self, ctl: "Controller"):
         super().__init__()
@@ -43,6 +56,9 @@ class Bridge(QObject):
             "id": m.id, "title": m.title, "created": m.created_at, "source": m.source,
             "busy": m.id in c.busy, "recording": m.id == c.rec_meeting,
             "hasSummary": bool(m.summary), "folder": m.folder_id,
+            # for the sidebar search: the summary as plain text, with today's names
+            "summaryText": _plain(render(m.summary, c.store.get_meeting_speakers(m.id)))
+                           if m.summary else "",
         } for m in c.store.list_meetings()])
 
     @Slot(result=str)
@@ -57,26 +73,32 @@ class Bridge(QObject):
         except KeyError:
             return "null"
         segments = c.store.get_segments(mid)
-        known = {name: pid for _, name, pid, _ in c.store.get_meeting_speakers(mid)}
-        me = c.cfg.my_name
+        sps = c.store.get_meeting_speakers(mid)
+        names = {sp.label: sp.name for sp in sps}
         speakers = []
-        for name in dict.fromkeys(s.speaker for s in segments if s.speaker):
-            mine = [s for s in segments if s.speaker == name]
+        for sp in sps:
+            mine = [s for s in segments if s.speaker == sp.label]
+            if not mine:
+                continue
             speakers.append({
-                "name": name,
-                "talk": sum(s.end - s.start for s in mine),
-                "turns": len(mine),
+                "label": sp.label, "tag": sp.tag, "name": sp.name,
+                "personId": sp.person_id, "defaultName": sp.default_name,
+                "talk": sum(s.end - s.start for s in mine), "turns": len(mine),
                 "sample": max(mine, key=lambda s: len(s.text)).text,
-                "known": bool(known.get(name)),
-                "me": name == me and name not in known,
-                "renamable": name in known,
+                "me": sp.is_me, "linked": sp.person_id is not None,
+                "voiceKnown": sp.person_id is not None and any(
+                    p[0] == sp.person_id for p in c.store.voice_profiles()),
+                "mic": sp.label == MIC_LABEL,
             })
         return json.dumps({
             "id": m.id, "title": m.title, "created": m.created_at, "source": m.source,
-            "dir": str(m.dir), "folder": m.folder_id, "summaryHtml": md_html(m.summary) if m.summary else "",
-            "segments": [{"start": s.start, "end": s.end, "speaker": s.speaker, "text": s.text}
-                         for s in segments],
-            "speakers": speakers, "me": me,
+            "dir": str(m.dir), "folder": m.folder_id,
+            # Summaries contain codes like [S2]; fill in today's names.
+            "summaryHtml": md_html(render(m.summary, sps)) if m.summary else "",
+            "segments": [{"start": s.start, "end": s.end, "speaker": names.get(s.speaker, s.speaker),
+                          "text": s.text} for s in segments],
+            "speakers": speakers,
+            "me": next((sp.name for sp in sps if sp.is_me), c.cfg.my_name),
             "busy": m.id in c.busy, "recording": m.id == c.rec_meeting,
             "progress": c.progress_text.get(m.id, ""),
         })
@@ -88,14 +110,27 @@ class Bridge(QObject):
     @Slot(result=str)
     def getState(self) -> str:
         c = self.ctl
-        return json.dumps({"recording": c.rec_meeting, "theme": c.theme_name(),
+        return json.dumps({"recording": c.rec_meeting, "theme": c.body_classes(),
                            "me": c.cfg.my_name, "live": c.cfg.live_transcription})
+
+    @Slot(int, int)
+    def setSelection(self, mid: int, folder: int) -> None:
+        """The page tells which meeting/folder is selected (-1 = none), for the menu bar."""
+        self.ctl.set_selection(None if mid < 0 else mid, None if folder < 0 else folder)
 
     # --- actions ----------------------------------------------------------
 
     @Slot()
     def toggleRecording(self) -> None:
         self.ctl.toggle_recording()
+
+    @Slot()
+    def startRecording(self) -> None:
+        self.ctl.start_recording()
+
+    @Slot()
+    def stopRecording(self) -> None:
+        self.ctl.stop_recording()
 
     @Slot()
     def importFile(self) -> None:
@@ -162,10 +197,47 @@ class Bridge(QObject):
         self.meetingsChanged.emit()
         self.meetingChanged.emit(mid)
 
-    @Slot(int, int, str)
-    def nameSpeaker(self, mid: int, old: str, new: str) -> None:
-        if new.strip() and new.strip() != old:
-            self.ctl.name_speaker(mid, old, new.strip())
+    # --- people -----------------------------------------------------------
+
+    @Slot(int, str, str)
+    def assignSpeaker(self, mid: int, label: str, person: str) -> None:
+        """Link a speaker to a person by name ("" = unlink). Instant: no new summary needed."""
+        self.ctl.assign_speaker(mid, label, person)
+
+    @Slot(result=str)
+    def listPeople(self) -> str:
+        return json.dumps(self.ctl.store.list_people())
+
+    @Slot(str, result=int)
+    def createPerson(self, name: str) -> int:
+        try:
+            pid = self.ctl.store.create_person(name)
+        except ValueError as e:
+            self.status.emit(str(e))
+            return -1
+        self.ctl.people_changed()
+        return pid
+
+    @Slot(int, str)
+    def renamePerson(self, pid: int, name: str) -> None:
+        try:
+            self.ctl.store.rename_person(pid, name)
+        except ValueError as e:
+            self.status.emit(str(e))
+        self.ctl.people_changed()
+
+    @Slot(int, int)
+    def mergePeople(self, source: int, target: int) -> None:
+        self.ctl.store.merge_people(source, target)
+        self.ctl.people_changed()
+
+    @Slot(int)
+    def deletePerson(self, pid: int) -> None:
+        try:
+            self.ctl.store.delete_person(pid)
+        except ValueError as e:
+            self.status.emit(str(e))
+        self.ctl.people_changed()
 
     @Slot(str, str, int, int)
     def ask(self, req: str, question: str, mid: int, folder: int) -> None:
