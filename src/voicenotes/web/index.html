@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voicenotes</title>
+<link rel="stylesheet" href="app.css">
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body class="light">
+<div class="app">
+
+  <aside class="sidebar">
+    <button class="record-btn" id="recordBtn" type="button">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label">Opname starten</span>
+      <span class="timer" id="sideTimer"></span>
+    </button>
+    <div class="side-actions">
+      <button class="ghost" id="importBtn" type="button">Bestand importeren</button>
+      <button class="icon-btn" id="settingsBtn" type="button" title="Instellingen" aria-label="Instellingen">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 6.75a3.25 3.25 0 1 0 0 6.5 3.25 3.25 0 0 0 0-6.5Zm7.1 4.4-1.55-.9a5.6 5.6 0 0 0 0-.5l1.55-.9a.6.6 0 0 0 .22-.82l-1.5-2.6a.6.6 0 0 0-.82-.22l-1.56.9a5.8 5.8 0 0 0-.43-.25V4.05a.6.6 0 0 0-.6-.6h-3a.6.6 0 0 0-.6.6v1.8l-.43.25-1.56-.9a.6.6 0 0 0-.82.22l-1.5 2.6a.6.6 0 0 0 .22.82l1.55.9v.5l-1.55.9a.6.6 0 0 0-.22.82l1.5 2.6c.17.29.53.38.82.22l1.56-.9.43.25v1.8c0 .33.27.6.6.6h3a.6.6 0 0 0 .6-.6v-1.8l.43-.25 1.56.9c.29.16.65.07.82-.22l1.5-2.6a.6.6 0 0 0-.22-.82Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      </button>
+    </div>
+    <label class="search">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m13.2 13.2 3.3 3.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <input id="search" type="search" placeholder="Zoeken in meetings" autocomplete="off">
+    </label>
+    <section class="folders" aria-label="Mappen">
+      <div class="folders-head"><span>Mappen</span>
+        <button class="icon-btn small" id="newFolderBtn" type="button" title="Nieuwe map" aria-label="Nieuwe map">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="folder-list" id="folders"></div>
+    </section>
+    <nav class="meetings" id="meetings" aria-label="Meetings"></nav>
+  </aside>
+
+  <main class="main" id="main">
+    <section class="empty" id="emptyState" hidden>
+      <h1>Nog geen meetings</h1>
+      <p>Start een opname tijdens een Teams- of WhatsApp-call, of importeer een opname die je al hebt. Alles blijft op deze Mac.</p>
+      <div class="empty-actions">
+        <button class="primary" type="button" data-action="record">Opname starten</button>
+        <button class="ghost" type="button" data-action="import">Bestand importeren</button>
+      </div>
+    </section>
+
+    <section class="meeting" id="meetingView" hidden>
+      <header class="meeting-head">
+        <div class="title-row">
+          <h1 class="title" id="title" spellcheck="false"></h1>
+          <div class="menu-wrap">
+            <button class="icon-btn" id="moreBtn" type="button" aria-label="Meer acties" aria-haspopup="menu">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.5" fill="currentColor"/><circle cx="10" cy="10" r="1.5" fill="currentColor"/><circle cx="15.5" cy="10" r="1.5" fill="currentColor"/></svg>
+            </button>
+            <div class="menu" id="moreMenu" role="menu" hidden>
+              <button role="menuitem" data-cmd="rename">Naam wijzigen</button>
+              <button role="menuitem" data-cmd="resummarize">Samenvatting opnieuw maken</button>
+              <button role="menuitem" data-cmd="reprocess">Opnieuw transcriberen</button>
+              <button role="menuitem" data-cmd="reveal">Toon bestanden in Finder</button>
+              <hr>
+              <button role="menuitem" data-cmd="delete" class="danger">Meeting verwijderen</button>
+            </div>
+          </div>
+        </div>
+        <div class="meta-row">
+          <p class="meta" id="meta"></p>
+          <label class="folder-pick" title="Map">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.75 5.5c0-.97.78-1.75 1.75-1.75h3.3l1.7 1.8h6c.97 0 1.75.78 1.75 1.75v7.2c0 .97-.78 1.75-1.75 1.75h-11c-.97 0-1.75-.78-1.75-1.75Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+            <select id="folderPick" aria-label="Map van deze meeting"></select>
+          </label>
+        </div>
+        <div class="working" id="working" hidden><span class="spinner" aria-hidden="true"></span><span id="workingText"></span></div>
+        <div class="strip" id="strip" role="img" aria-label="Wie sprak wanneer"></div>
+        <div class="strip-legend" id="legend"></div>
+      </header>
+
+      <div class="live" id="liveHead" hidden>
+        <div class="clock" id="clock">00:00</div>
+        <div class="meters">
+          <div class="meter"><span>Jij</span><div class="bar"><i id="micBar"></i></div></div>
+          <div class="meter"><span>Anderen</span><div class="bar"><i id="sysBar"></i></div></div>
+        </div>
+        <button class="stop-btn" id="stopBtn" type="button"><span class="sq" aria-hidden="true"></span>Stoppen en verwerken</button>
+      </div>
+
+      <div class="tabs" id="tabs" role="tablist">
+        <button role="tab" data-tab="summary" aria-selected="true">Samenvatting</button>
+        <button role="tab" data-tab="transcript">Transcript</button>
+        <button role="tab" data-tab="speakers">Sprekers</button>
+      </div>
+
+      <div class="scroll" id="scroll">
+        <article class="pane prose" id="pane-summary"></article>
+        <article class="pane transcript" id="pane-transcript" hidden></article>
+        <article class="pane speakers" id="pane-speakers" hidden></article>
+      </div>
+
+      <form class="askbar" id="askForm" autocomplete="off">
+        <input id="askInput" type="text" placeholder="Vraag iets over deze meeting">
+        <label class="scope"><input type="checkbox" id="askAll"> <span id="askAllLabel">alle meetings</span></label>
+        <button class="primary" type="submit">Vraag</button>
+      </form>
+    </section>
+  </main>
+
+  <aside class="answers" id="answers" hidden>
+    <header><h2>Vragen</h2><button class="icon-btn" id="closeAnswers" type="button" aria-label="Sluiten"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></header>
+    <div class="answer-list" id="answerList"></div>
+  </aside>
+</div>
+
+<dialog class="sheet" id="settings">
+  <form method="dialog" id="settingsForm">
+    <div class="sheet-body">
+    <h2>Instellingen</h2>
+    <div class="field" id="loginField">
+      <label class="inline-check"><input type="checkbox" id="sLogin"> Openen bij inloggen</label>
+      <p class="hint">Voicenotes start dan op de achtergrond, met alleen het icoon in de menubalk.</p>
+    </div>
+    <div class="field"><label for="sName">Jouw naam</label><input id="sName" type="text"><p class="hint">Zo heet je in transcripten. Je stem komt van je eigen microfoon.</p></div>
+    <div class="field"><label for="sVocab">Namen en vaktermen</label><textarea id="sVocab" rows="3" placeholder="Eén per regel, bijvoorbeeld collega's, klanten of producten"></textarea><p class="hint">Helpt bij het goed spellen van namen en jargon.</p></div>
+    <div class="field"><label for="sWhisper">Transcriptie na afloop</label>
+      <select id="sWhisper"><option value="mlx-community/whisper-large-v3-mlx">Nauwkeurig (aanbevolen)</option><option value="mlx-community/whisper-large-v3-turbo">Sneller</option></select></div>
+    <div class="field"><label for="sLlm">Model voor samenvattingen</label><select id="sLlm"></select><p class="hint" id="sLlmHint"></p>
+      <label class="inline-check sub" style="margin-top:8px"><input type="checkbox" id="sThinking"> Model laten nadenken voordat het antwoordt (betere samenvattingen, langzamer)</label></div>
+    <div class="field-row">
+      <div class="field check"><label><input type="checkbox" id="sLive"> Live meelezen tijdens een opname</label></div>
+      <div class="field check"><label><input type="checkbox" id="sDiarize"> Sprekers herkennen</label></div>
+    </div>
+    <div class="field">
+      <label class="inline-check"><input type="checkbox" id="sDictation"> Dicteren met de fn-toets</label>
+      <p class="hint">Houd fn ingedrukt en praat; bij loslaten verschijnt de tekst waar je cursor staat. Tik twee keer op fn om handsfree te dicteren tot je fn weer indrukt.</p>
+      <div class="dict-opts" id="sDictOpts">
+        <label class="dict-model">Herkenning
+          <select id="sDictModel">
+            <option value="mlx-community/whisper-large-v3-turbo">Nauwkeurig: vast Nederlands, kent je namen en termen (±1 seconde)</option>
+            <option value="mlx-community/parakeet-tdt-0.6b-v3">Snelst (±0,2 seconde), kan bij korte zinnen een woord missen</option>
+          </select></label>
+        <label class="inline-check sub"><input type="checkbox" id="sCleanup"> Tekst opschonen met het taalmodel (ongeveer 1 seconde extra)</label>
+        <div class="perm" id="permInput"></div>
+        <div class="perm" id="permPaste"></div>
+        <p class="hint">Zet in Toetsenbord-instellingen "Druk op 🌐-toets om" op "Niets doen", zodat fn niet ook de emoji-kiezer opent. Gebruikt Wispr Flow ook fn? Kies daar een andere toets. <a href="#" data-open="keyboard">Toetsenbord-instellingen openen</a></p>
+      </div>
+    </div>
+    <div class="field">
+      <label class="inline-check"><input type="checkbox" id="sDetect"> Calls automatisch herkennen</label>
+      <p class="hint">Zodra een van deze apps je microfoon gebruikt, vraagt Voicenotes of je wilt opnemen. Na de call stopt de opname vanzelf.</p>
+      <div class="apps" id="sApps"></div>
+    </div>
+    <div class="field"><label for="sThreshold">Hoe zeker moet stemherkenning zijn?</label>
+      <div class="range"><span>Sneller herkennen</span><input id="sThreshold" type="range" min="0.3" max="0.9" step="0.05"><span>Minder vergissingen</span></div></div>
+    <div class="field"><label>Bekende stemmen</label><div class="profiles" id="sProfiles"></div></div>
+    </div>
+    <div class="sheet-actions"><button class="ghost" value="cancel" type="button" id="settingsCancel">Annuleren</button><button class="primary" id="settingsSave" type="button">Opslaan</button></div>
+  </form>
+</dialog>
+
+<dialog class="sheet small" id="confirm">
+  <h2 id="confirmTitle"></h2>
+  <p id="confirmText"></p>
+  <div class="sheet-actions"><button class="ghost" type="button" id="confirmNo">Annuleren</button><button class="danger-btn" type="button" id="confirmYes"></button></div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

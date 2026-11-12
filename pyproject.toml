@@ -1,0 +1,45 @@
+[project]
+name = "voicenotes"
+version = "0.1.0"
+description = "Lokale meeting-transcriptie, sprekerherkenning en samenvattingen"
+readme = "README.md"
+authors = [
+    { name = "Cas" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "av>=19.0.2",
+    "markdown>=3.11.3",
+    "mlx-whisper>=0.4.3",
+    "numpy>=2.5.4",
+    "openai>=3.49.0",
+    "parakeet-mlx>=0.7.0",
+    "platformdirs>=4.14.5",
+    "pyannote-audio>=4.0.7",
+    "pyobjc-framework-applicationservices>=13.0",
+    "pyobjc-framework-cocoa>=13.0",
+    "pyobjc-framework-quartz>=13.0",
+    "pyside6>=6.12.0",
+    "rich>=15.0.0",
+    "silero-vad>=6.2.3",
+    "soundfile>=0.14.0",
+    "soxr>=1.1.0",
+    "typer>=0.29.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[project.scripts]
+voicenotes = "voicenotes.cli:app"
+voicenotes-app = "voicenotes.app:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
